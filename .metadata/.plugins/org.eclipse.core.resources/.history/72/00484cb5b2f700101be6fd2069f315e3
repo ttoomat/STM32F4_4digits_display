@@ -1,0 +1,12 @@
+/* CREATION DATE: 22.01.2026
+ * FILE NAME:     main.c
+ * PROGRAMMER:    @ttoomat
+ * PURPOSE:       Main file of the project. Connects everything together.
+ */
+#include "stm32f446xx.h"
+
+int main() {
+	// LED on PA5
+
+	return 0;
+}

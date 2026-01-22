@@ -1,0 +1,6 @@
+DeviceConfigurationTool..FirmwareRepositoryPath=C\:\\Users\\ttoomat\\STM32Cube\\Repository
+DeviceConfigurationTool..UpdaterCheckInterval=1
+DeviceConfigurationTool..UpdaterDataRefresh=dataRefreshDataOnly
+DeviceConfigurationTool..UpdaterDataRefreshInterfval=3
+DeviceConfigurationTool.AskToSwitchToCubeMxPerspective=false
+eclipse.preferences.version=1
