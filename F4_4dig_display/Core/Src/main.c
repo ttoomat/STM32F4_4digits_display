@@ -1,85 +1,77 @@
+/* CREATION DATE: 23.01.2026
+ * FILE NAME:     main.c
+ * PROGRAMMER:    @ttoomat
+ * PURPOSE:       4 digits display TM1637 protocol.
+ */
 #include "stm32f4xx.h"
 
-// Пины TM1637
-#define CLK_PIN   8
-#define DATA_PIN  9
-#define CLK_PORT  GPIOB
-#define DATA_PORT GPIOB
+#define CLK_PORT GPIOB
+#define CLK_PIN  8
+#define DIO_PORT GPIOB
+#define DIO_PIN  9
 
-// Макросы для управления пинами
+// CLK / DIO: HIGH / LOW
 #define CLK_HIGH()  (CLK_PORT->BSRR = (1U << CLK_PIN))
 #define CLK_LOW()   (CLK_PORT->BSRR = (1U << (CLK_PIN + 16)))
-#define DATA_HIGH() (DATA_PORT->BSRR = (1U << DATA_PIN))
-#define DATA_LOW()  (DATA_PORT->BSRR = (1U << (DATA_PIN + 16)))
+#define DIO_HIGH() (DIO_PORT->BSRR = (1U << DIO_PIN))
+#define DIO_LOW()  (DIO_PORT->BSRR = (1U << (DIO_PIN + 16)))
 
-// режим линии DIO: чтение (для ACK) и запись (для всего остального)
-#define DATA_INPUT()  (DATA_PORT->MODER &= ~(3U << (DATA_PIN * 2)))
-#define DATA_OUTPUT() (DATA_PORT->MODER |=  (1U << (DATA_PIN * 2)))
-
-// задержка
+// delay
+// TODO: SysTick
 void delay_us(volatile uint32_t us) {
     // При 16 МГц
     us *= 16;
     while (us--);
 }
 
-// условие start
+// start condition
 void tm1637_start(void) {
-    DATA_OUTPUT();
-    DATA_HIGH();
+    DIO_HIGH();
     CLK_HIGH();
     delay_us(2);
-    DATA_LOW();
+    DIO_LOW();
     delay_us(2);
     CLK_LOW();
 }
 
-// условие stop
+// stop condition
 void tm1637_stop(void) {
-    DATA_OUTPUT();
     CLK_LOW();
-    DATA_LOW();
+    DIO_LOW();
     delay_us(2);
     CLK_HIGH();
     delay_us(2);
-    DATA_HIGH();
+    DIO_HIGH();
     delay_us(2);
 }
 
-// Отправка одного байта
+// send 1 byte
 void tm1637_write_byte(uint8_t data) {
-    DATA_OUTPUT();
-    // отправляет по одному биту
+    // sends one bit at a time
     for (uint8_t i = 0; i < 8; i++) {
         CLK_LOW();
-        // 1 бит отображаем
+        // show 1-st bit
         if (data & 0x01) {
-            DATA_HIGH();
+            DIO_HIGH();
         } else {
-            DATA_LOW();
+        	DIO_LOW();
         }
         delay_us(2);
         CLK_HIGH();
         delay_us(2);
-        // переход к следующему биту
+        // shift so that the next bit is first
         data >>= 1;
     }
-    // Ожидаем ACK (TM1637 тянет DIO вниз)
+    // in perfect world here we must check ACK...
     CLK_LOW();
-    DATA_INPUT();          // Переключаем DIO на вход
     delay_us(2);
-    // (опционально: можно проверить, что линия LOW)
     CLK_HIGH();
     delay_us(2);
     CLK_LOW();
-    DATA_OUTPUT();         // Возвращаем в режим вывода
 }
 
-// Отображение "11:00"
-// Формат: DIG0 = правая цифра, DIG3 = левая
-// Обычно двоеточие управляется через старший бит (бит 7) в соответствующем разряде
-// Сегменты: A,B,C,D,E,F,G,DP (биты 0–7)
-// Коды цифр (без DP):
+// semi-column = DP for DIG1, for other digits DP doesn't work.
+// number codes (DP=0):
 const uint8_t digit_code[] = {
     0b00111111, // 0
     0b00000110, // 1
@@ -93,51 +85,41 @@ const uint8_t digit_code[] = {
     0b01101111  // 9
 };
 
+// format: DIG0 - left, DIG3 - right
 void tm1637_display(uint8_t dig0, uint8_t dig1, uint8_t dig2, uint8_t dig3) {
-	// создаём массив кодов разрядов
+	// digit codes array
     uint8_t data[4] = {
         digit_code[dig0],
         digit_code[dig1] | 0x80, // DIG1 - с двоеточием
         digit_code[dig2],
         digit_code[dig3]
     };
-
-    // 1. Режим автоинкремента адреса
+    // 1. Command 1: Auto increment address
     tm1637_start();
-    tm1637_write_byte(0x40); // 01000000: автоадрес, запись данных
+    tm1637_write_byte(0x40); // 0100_0000
     tm1637_stop();
-
-    // 2. Запись данных, начиная с адреса 0xC0 (00H)
+    // 2. Command 2: Address set 00H
     tm1637_start();
-    tm1637_write_byte(0xC0); // команда установки адреса 00H
+    tm1637_write_byte(0xC0); // 1100_0000
+    // 3. Write Data 0-3
     for (int i = 0; i < 4; i++) {
         tm1637_write_byte(data[i]);
     }
     tm1637_stop();
-
-    // 3. Включить дисплей с минимальной яркостью
+    // 3. Command 3: Show on, minimum brightness
     tm1637_start();
-    tm1637_write_byte(0x88); // 10001000: включён, яркость = 1/16 (минимум)
+    tm1637_write_byte(0x88); // 1000_1000
     tm1637_stop();
 }
 
 int main(void) {
-    // Включаем тактирование порта B
     RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
-
-    // Настраиваем PB8 и PB9 как выход с Open-Drain (как в I2C)
-    // Но TM1637 требует push-pull? На практике — open-drain с подтяжкой
-    // Однако TM1637 втягивает линию сам, поэтому можно использовать push-pull
-    // Установим как выход общего назначения, push-pull, low speed
-    GPIOB->MODER &= ~((3U << (8*2)) | (3U << (9*2)));
-    GPIOB->MODER |=  ((1U << (8*2)) | (1U << (9*2))); // Output mode
-
-    GPIOB->OTYPER &= ~((1U << 8) | (1U << 9)); // Push-pull
-    GPIOB->PUPDR &= ~((3U << (8*2)) | (3U << (9*2)));   // No pull
-
-    // Инициализация TM1637
-    tm1637_display(0, 5, 2, 3);
-
-    while (1) {
-    }
+    // PB8, PB9 output mode = 01
+    DIO_PORT->MODER |= (1U << (DATA_PIN * 2));
+    DIO_PORT->MODER &= ~(1U << (DIO_PIN * 2 + 1));
+    CLK_PORT->MODER |= (1U << (CLK_PIN * 2));
+    CLK_PORT->MODER &= ~(1U << (CLK_PIN * 2 + 1));
+    // show 21:23
+    tm1637_display(2, 1, 2, 3);
+    while (1) {}
 }
