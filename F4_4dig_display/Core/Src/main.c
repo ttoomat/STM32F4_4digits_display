@@ -4,7 +4,7 @@
  * PURPOSE:       4 digits display TM1637 protocol.
  */
 #include "stm32f4xx.h"
-
+/*
 #define CLK_PORT GPIOB
 #define CLK_PIN  8
 #define DIO_PORT GPIOB
@@ -17,7 +17,7 @@
 #define DIO_LOW()  (DIO_PORT->BSRR = (1U << (DIO_PIN + 16)))
 
 // delay
-// TODO: SysTick
+// TODO:
 void delay_us(volatile uint32_t us) {
     // При 16 МГц
     us *= 16;
@@ -74,8 +74,8 @@ void tm1637_write_byte(uint8_t data) {
 // number codes (DP=0):
 const uint8_t digit_code[] = {
     0b00111111, // 0
-    0b00000110, // 1
-    0b01011011, // 2
+    0b10000110, // 1
+    0b11011011, // 2
     0b01001111, // 3
     0b01100110, // 4
     0b01101101, // 5
@@ -108,18 +108,112 @@ void tm1637_display(uint8_t dig0, uint8_t dig1, uint8_t dig2, uint8_t dig3) {
     tm1637_stop();
     // 3. Command 3: Show on, minimum brightness
     tm1637_start();
-    tm1637_write_byte(0x88); // 1000_1000
+    tm1637_write_byte(0x8A); // 1000_1000
     tm1637_stop();
 }
 
+*/
+
+void delay_us(volatile uint32_t us) {
+    // При 16 МГц
+    us *= 16;
+    while (us--);
+}
+
+void SPI1_Init() {
+	// 1. Write proper GPIO registers: Configure GPIO for MOSI, MISO and SCK pins.
+	// PA5 - CLK, PA7 - MOSI. AF5. MODER = 10
+	// MODER:AF = 10
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    GPIOA->MODER &= ~GPIO_MODER_MODE5_0;
+    GPIOA->MODER |= GPIO_MODER_MODE5_1;
+    GPIOA->MODER &= ~GPIO_MODER_MODE7_0;
+    GPIOA->MODER |= GPIO_MODER_MODE7_1;
+    // AFR5 = 0101
+    GPIOA->AFR[0] |= GPIO_AFRL_AFRL5_0;
+    GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL5_1;
+    GPIOA->AFR[0] |= GPIO_AFRL_AFRL5_2;
+    GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL5_3;
+    // AFR7 = 0101
+    GPIOA->AFR[0] |= GPIO_AFRL_AFRL7_0;
+	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL7_1;
+	GPIOA->AFR[0] |= GPIO_AFRL_AFRL7_2;
+	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL7_3;
+	RCC->APB2ENR |= RCC_APB2ENR_SPI1EN;
+}
+
+void SPI1_Config() {
+	// 2. Write to the SPI_CR1 register:
+	// a) Configure the serial clock baud rate using the BR[2:0] bits
+	// 16 MHz -> 125 KHz, 128 = 110
+	SPI1->CR1 |= SPI_CR1_BR_1 | SPI_CR1_BR_2;
+	SPI1->CR1 &= ~SPI_CR1_BR_0;
+	// b) Configure the CPOL=0 and CPHA=1 bits combination.
+	SPI1->CR1 &= ~SPI_CR1_CPOL;
+	SPI1->CR1 |= SPI_CR1_CPHA;
+	// c) Select simplex or half-duplex mode by configuring RXONLY or BIDIMODE and
+	// BIDIOE (RXONLY and BIDIMODE can't be set at the same time)
+	//SPI1->CR1 |= SPI_CR1_BIDIOE; // output enabled
+	// d) Configure the LSBFIRST bit to define the frame format
+	// MSB first by default
+	// e) Configure the CRCEN and CRCEN bits if CRC is needed -- not needed I guess
+	// f) Configure SSM and SSI -- we don't use NSS pin
+	// g) Configure the MSTR bit (Master=1)
+	SPI1->CR1 |= SPI_CR1_MSTR;
+	// h) Set the DFF bit to configure the data frame format (8 or 16 bits).
+	// 8 bit by default = 1 command
+	// 3. Write to SPI_CR2 register:
+	// a) Configure SSOE
+	// SS=0 by default
+	// SPI enable
+	SPI1->CR1 |= SPI_CR1_SPE;
+}
+
+// ...
+void spi1_transmit(uint8_t *data, uint32_t size) {
+	uint32_t i = 0;
+	uint8_t temp;
+	while (i < size) {
+		// wait for TXE
+		// на втором байте тут зависает
+		while (!(SPI1->SR & SPI_SR_TXE)) {}
+		// write data to the data register
+		SPI1->DR = data[i];
+		i++;
+	}
+	// wait for TXE
+	//while (!(SPI1->SR & (SPI_SR_TXE))) {}
+	// wait for BUSY flag to reset
+	while (SPI1->SR & SPI_SR_BSY) {}
+	SPI1->SR &= ~SPI_SR_TXE;
+}
+
+
 int main(void) {
-    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+    /*
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
     // PB8, PB9 output mode = 01
-    DIO_PORT->MODER |= (1U << (DATA_PIN * 2));
+    DIO_PORT->MODER |= (1U << (DIO_PIN * 2));
     DIO_PORT->MODER &= ~(1U << (DIO_PIN * 2 + 1));
     CLK_PORT->MODER |= (1U << (CLK_PIN * 2));
     CLK_PORT->MODER &= ~(1U << (CLK_PIN * 2 + 1));
     // show 21:23
     tm1637_display(2, 1, 2, 3);
+    */
+	SPI1_Init();
+	SPI1_Config();
+	uint8_t data[7]; // 2 commands, 4 bytes, 1 command
+	data[0] = 0x40;
+	data[1] = 0xC0;
+	data[2] = 0xFF; // 8
+	data[3] = 0xFF; // 8
+	data[4] = 0xFF; // 8
+	data[5] = 0xFF; // 8
+	data[6] = 0x88;
+	for (uint8_t i = 0; i < 7; ++i) {
+		spi1_transmit(&(data[i]), 1);
+		delay_us(5);
+	}
+	//spi1_transmit(data, 7);
     while (1) {}
 }
